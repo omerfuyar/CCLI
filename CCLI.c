@@ -164,32 +164,122 @@ typedef struct sockaddr_in SocketAddress;
 
 #else // UNIX
 
-#include <unistd.h>
-#include <sys/socket.h>
 #include <arpa/inet.h>
-#include <netdb.h>  /* Needed for getaddrinfo() and freeaddrinfo() */
-#include <unistd.h> /* Needed for close() */
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 typedef int SocketHandle;
 typedef struct sockaddr_in SocketAddress;
 
 #define SocketInitialize()
+
 #define SocketTerminate()
 
-#define SocketCreate()
+#define SocketCreate(socketPtr)                                   \
+    do                                                            \
+    {                                                             \
+        if ((*socketPtr = socket(AF_INET, SOCK_STREAM, 0)) == -1) \
+        {                                                         \
+            perror("Socket creation failed");                     \
+            SocketTerminate();                                    \
+            exit(-1);                                             \
+        }                                                         \
+    } while (0)
 
-#define SocketBind()
+#define SocketClose(socketPtr)             \
+    do                                     \
+    {                                      \
+        shutdown(*socketPtr, SHUT_RDWR);   \
+        if (close(*socketPtr) == -1)       \
+        {                                  \
+            perror("Socket close failed"); \
+            SocketTerminate();             \
+            exit(-1);                      \
+        }                                  \
+    } while (0)
 
-#define SocketClose(socket, statusRet)        \
-    do                                        \
-    {                                         \
-        int status = 0;                       \
-        status = shutdown(socket, SHUT_RDWR); \
-        if (status == 0)                      \
-        {                                     \
-            status = close(socket);           \
-        }                                     \
-        *statusRet = status                   \
+#define SocketSetOption(socketPtr, optLevel, optName)                                               \
+    do                                                                                              \
+    {                                                                                               \
+        int option = 1;                                                                             \
+        if (setsockopt(*socketPtr, optLevel, optName, (const char *)&option, sizeof(option)) == -1) \
+        {                                                                                           \
+            perror("Socket option setting failed");                                                 \
+            SocketClose(socketPtr);                                                                 \
+            SocketTerminate();                                                                      \
+            exit(-1);                                                                               \
+        }                                                                                           \
+    } while (0)
+
+#define SocketBind(socketPtr, socketAddressPtr)                                                     \
+    do                                                                                              \
+    {                                                                                               \
+        if (bind(*socketPtr, (struct sockaddr *)socketAddressPtr, sizeof(*socketAddressPtr)) == -1) \
+        {                                                                                           \
+            perror("Socket bind failed");                                                           \
+            SocketClose(socketPtr);                                                                 \
+            SocketTerminate();                                                                      \
+            exit(-1);                                                                               \
+        }                                                                                           \
+    } while (0)
+
+#define SocketListen(socketPtr, maxQueueLength)       \
+    do                                                \
+    {                                                 \
+        if (listen(*socketPtr, maxQueueLength) == -1) \
+        {                                             \
+            perror("Socket listen failed");           \
+            SocketClose(socketPtr);                   \
+            SocketTerminate();                        \
+            exit(-1);                                 \
+        }                                             \
+    } while (0)
+
+#define SocketAccept(socketPtr, clientSocketPtr)                       \
+    do                                                                 \
+    {                                                                  \
+        if ((*clientSocketPtr = accept(*socketPtr, NULL, NULL)) == -1) \
+        {                                                              \
+            perror("Socket accept failed");                            \
+            SocketClose(socketPtr);                                    \
+            SocketTerminate();                                         \
+            exit(-1);                                                  \
+        }                                                              \
+    } while (0)
+
+#define SocketConnect(socketPtr, socketAddressPtr)                                                     \
+    do                                                                                                 \
+    {                                                                                                  \
+        if (connect(*socketPtr, (struct sockaddr *)socketAddressPtr, sizeof(*socketAddressPtr)) == -1) \
+        {                                                                                              \
+            perror("Socket connection failed");                                                        \
+            SocketClose(socketPtr);                                                                    \
+            SocketTerminate();                                                                         \
+            exit(-1);                                                                                  \
+        }                                                                                              \
+    } while (0)
+
+#define SocketSend(clientSocket, msgPtr, msgSize)          \
+    do                                                     \
+    {                                                      \
+        if (send(*clientSocket, msgPtr, msgSize, 0) == -1) \
+        {                                                  \
+            perror("Socket message send failed");          \
+            SocketTerminate();                             \
+            exit(-1);                                      \
+        }                                                  \
+    } while (0)
+
+#define SocketReceive(socketPtr, bufferPtr, bufferSize)       \
+    do                                                        \
+    {                                                         \
+        if (recv(*socketPtr, bufferPtr, bufferSize, 0) == -1) \
+        {                                                     \
+            perror("Socket message receive failed");          \
+            SocketTerminate();                                \
+            exit(-1);                                         \
+        }                                                     \
     } while (0)
 
 #endif
@@ -213,7 +303,7 @@ SocketAddress ROOM_ADDRESS = {0};
 SocketHandle USER_SOCKET = {0};
 SocketHandle ROOM_GUEST = {0};
 
-int main(const int argc, const char const **argv)
+int main(const int argc, const char **argv)
 {
     if (argc != 4)
     {
@@ -268,7 +358,7 @@ int main(const int argc, const char const **argv)
 
     if (USER_MODE == UserModeRoom) // user is room
     {
-        ROOM_ADDRESS.sin_addr.S_un.S_addr = INADDR_ANY;
+        ROOM_ADDRESS.sin_addr.s_addr = INADDR_ANY;
 
         SocketBind(&USER_SOCKET, &ROOM_ADDRESS);
         SocketListen(&USER_SOCKET, ROOM_MAX_GUEST_COUNT); // blocking
@@ -277,13 +367,13 @@ int main(const int argc, const char const **argv)
         while (1)
         {
             char inputBuffer[255];
-            gets(inputBuffer); // blocking
+            fgets(inputBuffer, sizeof(inputBuffer), stdin); // blocking
             SocketSend(&ROOM_GUEST, inputBuffer, sizeof(inputBuffer));
         }
     }
     else // user is guest
     {
-        ROOM_ADDRESS.sin_addr.S_un.S_addr = inet_addr("127.0.0.1");
+        ROOM_ADDRESS.sin_addr.s_addr = inet_addr("127.0.0.1");
 
         SocketConnect(&USER_SOCKET, &ROOM_ADDRESS);
 
