@@ -35,12 +35,17 @@ HOW TO USE
 
 #ifdef _WIN32 // Windows
 
+#define WINDOWS 1
+
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <process.h>
+#include <windows.h>
 
 typedef unsigned int SocketHandle;
 typedef fd_set SocketSet;
 typedef struct sockaddr_in SocketAddress;
+typedef HANDLE ThreadHandle;
 
 #define SocketInitialize()                                                     \
     do                                                                         \
@@ -177,7 +182,27 @@ typedef struct sockaddr_in SocketAddress;
         }                                                              \
     } while (0)
 
+#define ThreadCreate(threadHandlePtr, threadFunction, threadArgument)                                                          \
+    do                                                                                                                         \
+    {                                                                                                                          \
+        if ((*(threadHandlePtr) = (HANDLE)_beginthread((void (*)(void *))threadFunction, 0, threadArgument)) == (HANDLE)(-1L)) \
+        {                                                                                                                      \
+            perror("Thread creation failed");                                                                                  \
+            SocketTerminate();                                                                                                 \
+            exit(-1);                                                                                                          \
+        }                                                                                                                      \
+    } while (0)
+
+#define ThreadJoin(threadHandle)                     \
+    do                                               \
+    {                                                \
+        WaitForSingleObject(threadHandle, INFINITE); \
+        CloseHandle(threadHandle);                   \
+    } while (0)
+
 #else // UNIX
+
+#define WINDOWS 0
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -185,11 +210,13 @@ typedef struct sockaddr_in SocketAddress;
 #include <sys/select.h>
 #include <sys/types.h>
 #include <netdb.h>
+#include <pthread.h>
 #include <unistd.h>
 
 typedef int SocketHandle;
 typedef fd_set SocketSet;
 typedef struct sockaddr_in SocketAddress;
+typedef pthread_t ThreadHandle;
 
 #define SocketInitialize()
 
@@ -312,12 +339,29 @@ typedef struct sockaddr_in SocketAddress;
         }                                                    \
     } while (0)
 
+#define ThreadCreate(threadHandlePtr, threadFunction, threadArgument)                   \
+    do                                                                                  \
+    {                                                                                   \
+        if (pthread_create(threadHandlePtr, NULL, threadFunction, threadArgument) != 0) \
+        {                                                                               \
+            perror("Thread creation failed");                                           \
+            SocketTerminate();                                                          \
+            exit(-1);                                                                   \
+        }                                                                               \
+    } while (0)
+
+#define ThreadJoin(threadHandle)          \
+    do                                    \
+    {                                     \
+        pthread_join(threadHandle, NULL); \
+    } while (0)
+
 #endif
 
 #define USER_NICK_MAX_LENGTH 32
 #define MESSAGE_MAX_LENGTH 512
 #define ROOM_IP_MAX_LENGTH 128
-#define ROOM_MAX_GUEST_COUNT FD_SETSIZE
+#define ROOM_MAX_GUEST_COUNT 5
 
 typedef enum
 {
@@ -326,22 +370,34 @@ typedef enum
     UserModeRoom = 1
 } UserMode;
 
-char USER_NICK[USER_NICK_MAX_LENGTH] = {0};
-UserMode USER_MODE = UserModeInvalid;
+char COMMON_NAME[USER_NICK_MAX_LENGTH] = {0};
+UserMode APP_MODE = UserModeInvalid;
 short unsigned ROOM_PORT = 0;
 
 SocketAddress ROOM_ADDRESS = {0};
-SocketHandle USER_SOCKET = {0}; // either room or guest (server or client)
+SocketHandle COMMON_SOCKET = {0}; // either room or guest (server or client)
+
+char messageBuffer[MESSAGE_MAX_LENGTH] = {0};
+
+void *GUEST_BROADCAST_LISTENER(void *ptrArg)
+{
+    (void)ptrArg;
+    while (1)
+    {
+        SocketReceive(&COMMON_SOCKET, messageBuffer, sizeof(messageBuffer));
+        printf("%s", messageBuffer);
+    }
+}
 
 int main(const int argc, const char **argv)
 {
     if (strcmp("room", argv[2]) == 0)
     {
-        USER_MODE = UserModeRoom;
+        APP_MODE = UserModeRoom;
     }
     else if (strcmp("guest", argv[2]) == 0)
     {
-        USER_MODE = UserModeGuest;
+        APP_MODE = UserModeGuest;
     }
     else
     {
@@ -349,7 +405,7 @@ int main(const int argc, const char **argv)
         exit(-1);
     }
 
-    if ((USER_MODE == UserModeRoom && argc != 4) || (USER_MODE == UserModeGuest && argc != 5))
+    if ((APP_MODE == UserModeRoom && argc != 4) || (APP_MODE == UserModeGuest && argc != 5))
     {
         printf("Invalid argument count for selected mode. Read instructions.\n");
         exit(-1);
@@ -358,11 +414,11 @@ int main(const int argc, const char **argv)
     unsigned char userNickLength = (unsigned char)strlen(argv[1]);
     if (userNickLength > USER_NICK_MAX_LENGTH)
     {
-        printf("%s is too long. Max length must be %d.\n", USER_MODE == UserModeRoom ? "Room name" : "User nick", USER_NICK_MAX_LENGTH);
+        printf("%s is too long. Max length must be %d.\n", APP_MODE == UserModeRoom ? "Room name" : "User nick", USER_NICK_MAX_LENGTH);
         exit(-1);
     }
 
-    strncpy(USER_NICK, argv[1], userNickLength);
+    strncpy(COMMON_NAME, argv[1], userNickLength);
 
     unsigned char roomPortLength = (unsigned char)strlen(argv[3]);
     if (roomPortLength > 5 && roomPortLength < 1)
@@ -377,17 +433,16 @@ int main(const int argc, const char **argv)
 
     SocketInitialize();
 
-    SocketCreate(&USER_SOCKET);
+    SocketCreate(&COMMON_SOCKET);
 
     ROOM_ADDRESS.sin_family = AF_INET;
     ROOM_ADDRESS.sin_port = htons(ROOM_PORT);
 
-    char messageBuffer[MESSAGE_MAX_LENGTH] = {0};
-
-    if (USER_MODE == UserModeRoom) // user is room
+    if (APP_MODE == UserModeRoom) // user is room
     {
         char hostName[256];
         gethostname(hostName, sizeof(hostName));
+        printf("\nRoom Name: %s\n", COMMON_NAME);
         printf("Server is running on host: %s\n", hostName);
         printf("Potential room IPs to connect:\n");
 
@@ -402,19 +457,21 @@ int main(const int argc, const char **argv)
             }
         }
 
+        printf("\n");
+
         ROOM_ADDRESS.sin_addr.s_addr = INADDR_ANY;
 
-        SocketOption(&USER_SOCKET, SOL_SOCKET, SO_REUSEADDR);
+        SocketOption(&COMMON_SOCKET, SOL_SOCKET, SO_REUSEADDR);
 
-        SocketBind(&USER_SOCKET, &ROOM_ADDRESS);
+        SocketBind(&COMMON_SOCKET, &ROOM_ADDRESS);
 
-        SocketListen(&USER_SOCKET, ROOM_MAX_GUEST_COUNT);
+        SocketListen(&COMMON_SOCKET, ROOM_MAX_GUEST_COUNT);
 
         SocketSet roomGuestSet = {0};
         SocketSet roomGuestEventSet = {0};
 
         FD_ZERO(&roomGuestSet);
-        FD_SET(USER_SOCKET, &roomGuestSet);
+        FD_SET(COMMON_SOCKET, &roomGuestSet);
 
         while (1)
         {
@@ -424,18 +481,14 @@ int main(const int argc, const char **argv)
 
             for (SocketHandle index = 0; index < ROOM_MAX_GUEST_COUNT; index++)
             {
-#ifdef _WIN32
-                SocketHandle triggeredSocket = roomGuestEventSet.fd_array[index];
-#else
-                SocketHandle triggeredSocket = index;
-#endif
+                SocketHandle triggeredSocket = WINDOWS ? roomGuestEventSet.fd_array[index] : (SocketHandle)index;
 
                 if (FD_ISSET(triggeredSocket, &roomGuestEventSet))
                 {
-                    if (triggeredSocket == USER_SOCKET) // event from server, new connection
+                    if (triggeredSocket == COMMON_SOCKET) // event from server, new connection
                     {
                         SocketHandle newGuestSocket = {0};
-                        SocketAccept(&USER_SOCKET, &newGuestSocket);
+                        SocketAccept(&COMMON_SOCKET, &newGuestSocket);
                         FD_SET(newGuestSocket, &roomGuestSet);
                     }
                     else // event from already connected socket, handle connection
@@ -446,18 +499,17 @@ int main(const int argc, const char **argv)
                         {
                             SocketClose(&triggeredSocket);
                             FD_CLR(triggeredSocket, &roomGuestSet);
+                            triggeredSocket = (SocketHandle)0;
                         }
                         else
                         {
                             printf("%s", messageBuffer);
-                            for (unsigned int j = 0; j < (unsigned int)triggeredSocket; j++)
+
+                            for (unsigned int j = 0; j < (unsigned int)ROOM_MAX_GUEST_COUNT; j++)
                             {
-#ifdef _WIN32
-                                SocketHandle targetSocket = roomGuestSet.fd_array[i];
-#else
-                                SocketHandle targetSocket = (SocketHandle)j;
-#endif
-                                if (targetSocket != USER_SOCKET && targetSocket != triggeredSocket)
+                                SocketHandle targetSocket = WINDOWS ? roomGuestSet.fd_array[j] : (SocketHandle)j;
+
+                                if (targetSocket != COMMON_SOCKET && targetSocket != triggeredSocket && targetSocket != (SocketHandle)0)
                                 {
                                     SocketSend(&targetSocket, messageBuffer, sizeof(messageBuffer));
                                 }
@@ -473,19 +525,20 @@ int main(const int argc, const char **argv)
         const char *serverIP = argv[4];
         ROOM_ADDRESS.sin_addr.s_addr = inet_addr(serverIP);
 
-        SocketConnect(&USER_SOCKET, &ROOM_ADDRESS);
+        SocketConnect(&COMMON_SOCKET, &ROOM_ADDRESS);
+
+        ThreadHandle guestBroadcastListener = {0};
+        ThreadCreate(&guestBroadcastListener, GUEST_BROADCAST_LISTENER, NULL);
 
         while (1)
         {
             unsigned int nickOffset = userNickLength + sizeof("[] : ");
 
-            printf("[%s] : ", USER_NICK);
+            printf("[%s] : ", COMMON_NAME);
             fgets((char *)messageBuffer + nickOffset, (int)(sizeof(messageBuffer) - nickOffset), stdin);
             sprintf(messageBuffer, "[%s] : %s", argv[1], messageBuffer + nickOffset);
-            SocketSend(&USER_SOCKET, messageBuffer, sizeof(messageBuffer));
 
-            SocketReceive(&USER_SOCKET, messageBuffer, sizeof(messageBuffer));
-            printf("%s", messageBuffer);
+            SocketSend(&COMMON_SOCKET, messageBuffer, sizeof(messageBuffer));
         }
     }
 
