@@ -422,13 +422,7 @@ int main(const int argc, const char **argv)
 
             SocketSetSelect(&roomGuestEventSet, ROOM_MAX_GUEST_COUNT);
 
-#ifdef _WIN32
-            SocketHandle triggeredSocket = roomGuestEventSet.fd_count;
-#else
-            SocketHandle triggeredSocket = ROOM_MAX_GUEST_COUNT;
-#endif
-
-            for (SocketHandle index = 0; index < triggeredSocket; index++)
+            for (SocketHandle index = 0; index < ROOM_MAX_GUEST_COUNT; index++)
             {
 #ifdef _WIN32
                 SocketHandle triggeredSocket = roomGuestEventSet.fd_array[index];
@@ -456,12 +450,12 @@ int main(const int argc, const char **argv)
                         else
                         {
                             printf("%s", messageBuffer);
-                            for (unsigned int j = 0; j < triggeredSocket; j++)
+                            for (unsigned int j = 0; j < (unsigned int)triggeredSocket; j++)
                             {
 #ifdef _WIN32
                                 SocketHandle targetSocket = roomGuestSet.fd_array[i];
 #else
-                                SocketHandle targetSocket = j;
+                                SocketHandle targetSocket = (SocketHandle)j;
 #endif
                                 if (targetSocket != USER_SOCKET && targetSocket != triggeredSocket)
                                 {
@@ -477,9 +471,7 @@ int main(const int argc, const char **argv)
     else // user is guest
     {
         const char *serverIP = argv[4];
-        printf("ip address string : %s", serverIP);
         ROOM_ADDRESS.sin_addr.s_addr = inet_addr(serverIP);
-        printf("ip address : %d", ROOM_ADDRESS.sin_addr.s_addr);
 
         SocketConnect(&USER_SOCKET, &ROOM_ADDRESS);
 
