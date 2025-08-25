@@ -182,6 +182,9 @@ typedef struct sockaddr_in SocketAddress;
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/select.h>
+#include <sys/types.h>
+#include <netdb.h>
 #include <unistd.h>
 
 typedef int SocketHandle;
@@ -298,9 +301,15 @@ typedef struct sockaddr_in SocketAddress;
         }                                                     \
     } while (0)
 
-#define SocketSetSelect() \
-    do                    \
-    {                     \
+#define SocketSetSelect(setPtr, setSize)                     \
+    do                                                       \
+    {                                                        \
+        if (select(setSize, setPtr, NULL, NULL, NULL) == -1) \
+        {                                                    \
+            perror("Socket select failed");                  \
+            SocketTerminate();                               \
+            exit(-1);                                        \
+        }                                                    \
     } while (0)
 
 #endif
@@ -413,9 +422,19 @@ int main(const int argc, const char **argv)
 
             SocketSetSelect(&roomGuestEventSet, ROOM_MAX_GUEST_COUNT);
 
-            for (unsigned int index = 0; index < roomGuestEventSet.fd_count; index++)
+#ifdef _WIN32
+            SocketHandle triggeredSocket = roomGuestEventSet.fd_count;
+#else
+            SocketHandle triggeredSocket = ROOM_MAX_GUEST_COUNT;
+#endif
+
+            for (SocketHandle index = 0; index < triggeredSocket; index++)
             {
+#ifdef _WIN32
                 SocketHandle triggeredSocket = roomGuestEventSet.fd_array[index];
+#else
+                SocketHandle triggeredSocket = index;
+#endif
 
                 if (FD_ISSET(triggeredSocket, &roomGuestEventSet))
                 {
@@ -437,9 +456,13 @@ int main(const int argc, const char **argv)
                         else
                         {
                             printf("%s", messageBuffer);
-                            for (unsigned int i = 0; i < roomGuestSet.fd_count; i++)
+                            for (unsigned int j = 0; j < triggeredSocket; j++)
                             {
+#ifdef _WIN32
                                 SocketHandle targetSocket = roomGuestSet.fd_array[i];
+#else
+                                SocketHandle targetSocket = j;
+#endif
                                 if (targetSocket != USER_SOCKET && targetSocket != triggeredSocket)
                                 {
                                     SocketSend(&targetSocket, messageBuffer, sizeof(messageBuffer));
@@ -454,7 +477,9 @@ int main(const int argc, const char **argv)
     else // user is guest
     {
         const char *serverIP = argv[4];
+        printf("ip address string : %s", serverIP);
         ROOM_ADDRESS.sin_addr.s_addr = inet_addr(serverIP);
+        printf("ip address : %d", ROOM_ADDRESS.sin_addr.s_addr);
 
         SocketConnect(&USER_SOCKET, &ROOM_ADDRESS);
 
