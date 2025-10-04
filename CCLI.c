@@ -9,82 +9,71 @@ CCLI
 
 HOW TO USE
     -Logic:
-        -A user starts the app in room mode
-        and other users connects to that room
-        in guest mode.
+        One user creates a room which listens to
+        the specified local port and responds to
+        requests. There can be 2 types of requests:
+        POST for sending messages,
+        GET for polled messages in the room.
+        You can use things like ngrok to make your
+        room available worldwide.
 
-        -The user who created the room can open
-        another terminal and join to the room.
+        Other users creates a guest and joins to
+        the room with required arguments. Guests
+        enters a blank newline character to get
+        polled messages, and basically anything
+        else to send messages.
 
     -Compile:
-        For Windows:
+        Windows:
             <YOUR_COMPILER> CCLI.c -o CCLI.exe -lws2_32
-        For UNIX:
+        UNIX:
             <YOUR_COMPILER> CCLI.c -o CCLI
 
     -Run:
-        For Room:
-            ./CCLI <ROOM_NAME> room <ROOM_PORT>
-        For Guest:
-            ./CCLI <YOUR_NICK> guest <ROOM_PORT> <SERVER_IP_ADDRESS>
+        Room:
+            <CCLI_EXECUTABLE> room <ROOM_NAME> <ROOM_PORT_TO_LISTEN>
+        Guest:
+            <CCLI_EXECUTABLE> guest <GUEST_NAME> <ROOM_URL_TO_JOIN>
+
+    -Example:
+        Room:
+            ./CCLI room MyRoom 3000
+            [ngrok http 3000]
+        Guests:
+            ./CCLI guest LocalGuest http://localhost:3000
+            [./CCLI guest RemoteGuest http://my-ngrok-url.com]
 */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#pragma region HashTable
-
-#define MAP_SIZE 128
-
-typedef char *(*RouteFunction)(char *);
-
-RouteFunction ROUTE_MAP[MAP_SIZE] = {0};
-
-int hash(const char *key)
-{
-    size_t strLength = strlen(key);
-
-    int sum = 0;
-    int mul = 1;
-
-    for (int i = 0; i < strLength; i++)
-    {
-        mul = (i % 4 == 0) ? 1 : mul * 256;
-        sum += key[i] * mul;
-    }
-
-    return sum % MAP_SIZE;
-}
-
-int mapRegister(const char *key, const RouteFunction value)
-{
-    int index = hash(key);
-
-    ROUTE_MAP[index] = value;
-
-    return index;
-}
-
-RouteFunction mapAccess(const char *key)
-{
-    int index = hash(key);
-
-    return ROUTE_MAP[index];
-}
-
-#pragma endregion HashTable
-
-char *test(char *param)
-{
-    printf("%s\n", param);
-    return "bar";
-}
-
 int main(int argc, char **argv)
 {
-    printf("index for 'testasd' : %d\n", mapRegister("testasd", test));
-    printf("fun return : %s\n", mapAccess("testasd")("foo"));
+    if (argc != 4)
+    {
+        goto errArgCount;
+    }
 
+    if (!strcmp(argv[1], "room"))
+    {
+    }
+    else if (!strcmp(argv[1], "guest"))
+    {
+    }
+    else
+    {
+        goto errArgUse;
+    }
+
+success:
     return 0;
+
+errArgCount:
+    printf("Invalid use of app. Please read the guide in source code.");
+    return 1;
+
+errArgUse:
+    printf("Invalid Arguments. Please read the guide in source code.");
+    return 2;
 }
