@@ -1,11 +1,11 @@
 /*
 CCLI
     -Chat-CLI is a cross platform minimal
-    dependency command line interface
-    chat application. All you need is just
-    a working compiler, internet connection
-    and knowledge about how to use the app
-    which indicated above.
+    dependency command line interface local
+    network based chat application. All you
+    need is just a working compiler, internet
+    connection and knowledge about how to
+    use the app which indicated down below.
 
 HOW TO USE
     -Logic:
@@ -33,514 +33,58 @@ HOW TO USE
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef _WIN32 // Windows
+#pragma region HashTable
 
-#define WINDOWS 1
+#define MAP_SIZE 128
 
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <process.h>
-#include <windows.h>
+typedef char *(*RouteFunction)(char *);
 
-typedef unsigned int SocketHandle;
-typedef fd_set SocketSet;
-typedef struct sockaddr_in SocketAddress;
-typedef HANDLE ThreadHandle;
+RouteFunction ROUTE_MAP[MAP_SIZE] = {0};
 
-#define SocketInitialize()                                                     \
-    do                                                                         \
-    {                                                                          \
-        WSADATA wsa_data = {0};                                                \
-        if (WSAStartup(MAKEWORD(1, 1), &wsa_data) != 0)                        \
-        {                                                                      \
-            printf("Socket Initialization failed : %d.\n", WSAGetLastError()); \
-            exit(-1);                                                          \
-        }                                                                      \
-    } while (0)
-
-#define SocketTerminate() \
-    do                    \
-    {                     \
-        WSACleanup();     \
-    } while (0)
-
-#define SocketCreate(socketPtr)                                                                             \
-    do                                                                                                      \
-    {                                                                                                       \
-        /*if ((*socketPtr = socket(AF_INET, SOCK_STREAM, isServer ? IPPROTO_TCP : 0)) == INVALID_SOCKET) */ \
-        if ((*socketPtr = socket(AF_INET, SOCK_STREAM, 0)) == INVALID_SOCKET)                               \
-        {                                                                                                   \
-            printf("Socket create failed : %d.\n", WSAGetLastError());                                      \
-            SocketTerminate();                                                                              \
-            exit(-1);                                                                                       \
-        }                                                                                                   \
-    } while (0)
-
-#define SocketClose(socketPtr)                                        \
-    do                                                                \
-    {                                                                 \
-        shutdown(*socketPtr, SD_BOTH);                                \
-        if (closesocket(*socketPtr) == SOCKET_ERROR)                  \
-        {                                                             \
-            printf("Socket close failed : %d.\n", WSAGetLastError()); \
-            SocketTerminate();                                        \
-            exit(-1);                                                 \
-        }                                                             \
-    } while (0)
-
-#define SocketOption(socketPtr, optLevel, optName)                                                            \
-    do                                                                                                        \
-    {                                                                                                         \
-        int option = 1;                                                                                       \
-        if (setsockopt(*socketPtr, optLevel, optName, (const char *)&option, sizeof(option)) == SOCKET_ERROR) \
-        {                                                                                                     \
-            printf("Socket option set failed : %d.\n", WSAGetLastError());                                    \
-            SocketClose(socketPtr);                                                                           \
-            SocketTerminate();                                                                                \
-            exit(-1);                                                                                         \
-        }                                                                                                     \
-    } while (0)
-
-#define SocketBind(socketPtr, socketAddressPtr)                                                               \
-    do                                                                                                        \
-    {                                                                                                         \
-        if (bind(*socketPtr, (struct sockaddr *)socketAddressPtr, sizeof(*socketAddressPtr)) == SOCKET_ERROR) \
-        {                                                                                                     \
-            printf("Socket bind failed : %d.\n", WSAGetLastError());                                          \
-            SocketClose(socketPtr);                                                                           \
-            SocketTerminate();                                                                                \
-            exit(-1);                                                                                         \
-        }                                                                                                     \
-    } while (0)
-
-#define SocketListen(socketPtr, maxQueueLength)                        \
-    do                                                                 \
-    {                                                                  \
-        if (listen(*socketPtr, maxQueueLength) != 0)                   \
-        {                                                              \
-            printf("Socket listen failed : %d.\n", WSAGetLastError()); \
-            SocketClose(socketPtr);                                    \
-            SocketTerminate();                                         \
-            exit(-1);                                                  \
-        }                                                              \
-    } while (0)
-
-#define SocketAccept(socketPtr, clientSocketPtr)                                   \
-    do                                                                             \
-    {                                                                              \
-        if ((*clientSocketPtr = accept(*socketPtr, NULL, NULL)) == INVALID_SOCKET) \
-        {                                                                          \
-            printf("Socket accept failed : %d.\n", WSAGetLastError());             \
-            SocketClose(socketPtr);                                                \
-            SocketTerminate();                                                     \
-            exit(-1);                                                              \
-        }                                                                          \
-    } while (0)
-
-#define SocketConnect(socketPtr, socketAddressPtr)                                                               \
-    do                                                                                                           \
-    {                                                                                                            \
-        if (connect(*socketPtr, (struct sockaddr *)socketAddressPtr, sizeof(*socketAddressPtr)) == SOCKET_ERROR) \
-        {                                                                                                        \
-            printf("Socket connect failed : %d.\n", WSAGetLastError());                                          \
-            SocketClose(socketPtr);                                                                              \
-            SocketTerminate();                                                                                   \
-            exit(-1);                                                                                            \
-        }                                                                                                        \
-    } while (0)
-
-#define SocketSend(clientSocket, msgPtr, msgSize)                            \
-    do                                                                       \
-    {                                                                        \
-        if (send(*clientSocket, msgPtr, msgSize, 0) == SOCKET_ERROR)         \
-        {                                                                    \
-            printf("Socket message send failed : %d.\n", WSAGetLastError()); \
-            SocketTerminate();                                               \
-            exit(-1);                                                        \
-        }                                                                    \
-    } while (0)
-
-#define SocketReceive(socketPtr, bufferPtr, bufferSize)                         \
-    do                                                                          \
-    {                                                                           \
-        if (recv(*socketPtr, bufferPtr, bufferSize, 0) == SOCKET_ERROR)         \
-        {                                                                       \
-            printf("Socket message receive failed : %d.\n", WSAGetLastError()); \
-            SocketTerminate();                                                  \
-            exit(-1);                                                           \
-        }                                                                       \
-    } while (0)
-
-#define SocketSetSelect(setPtr, setSize)                               \
-    do                                                                 \
-    {                                                                  \
-        if (select(0, setPtr, NULL, NULL, NULL) == SOCKET_ERROR)       \
-        {                                                              \
-            printf("Socket select failed : %d.\n", WSAGetLastError()); \
-            SocketTerminate();                                         \
-            exit(-1);                                                  \
-        }                                                              \
-    } while (0)
-
-#define ThreadCreate(threadHandlePtr, threadFunction, threadArgument)                                                          \
-    do                                                                                                                         \
-    {                                                                                                                          \
-        if ((*(threadHandlePtr) = (HANDLE)_beginthread((void (*)(void *))threadFunction, 0, threadArgument)) == (HANDLE)(-1L)) \
-        {                                                                                                                      \
-            perror("Thread creation failed");                                                                                  \
-            SocketTerminate();                                                                                                 \
-            exit(-1);                                                                                                          \
-        }                                                                                                                      \
-    } while (0)
-
-#define ThreadJoin(threadHandle)                     \
-    do                                               \
-    {                                                \
-        WaitForSingleObject(threadHandle, INFINITE); \
-        CloseHandle(threadHandle);                   \
-    } while (0)
-
-#else // UNIX
-
-#define WINDOWS 0
-
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <sys/select.h>
-#include <sys/types.h>
-#include <netdb.h>
-#include <pthread.h>
-#include <unistd.h>
-
-typedef int SocketHandle;
-typedef fd_set SocketSet;
-typedef struct sockaddr_in SocketAddress;
-typedef pthread_t ThreadHandle;
-
-#define SocketInitialize()
-
-#define SocketTerminate()
-
-#define SocketCreate(socketPtr)                                   \
-    do                                                            \
-    {                                                             \
-        if ((*socketPtr = socket(AF_INET, SOCK_STREAM, 0)) == -1) \
-        {                                                         \
-            perror("Socket create failed");                       \
-            SocketTerminate();                                    \
-            exit(-1);                                             \
-        }                                                         \
-    } while (0)
-
-#define SocketClose(socketPtr)             \
-    do                                     \
-    {                                      \
-        shutdown(*socketPtr, SHUT_RDWR);   \
-        if (close(*socketPtr) == -1)       \
-        {                                  \
-            perror("Socket close failed"); \
-            SocketTerminate();             \
-            exit(-1);                      \
-        }                                  \
-    } while (0)
-
-#define SocketOption(socketPtr, optLevel, optName)                                                  \
-    do                                                                                              \
-    {                                                                                               \
-        int option = 1;                                                                             \
-        if (setsockopt(*socketPtr, optLevel, optName, (const char *)&option, sizeof(option)) == -1) \
-        {                                                                                           \
-            perror("Socket option set failed");                                                     \
-            SocketClose(socketPtr);                                                                 \
-            SocketTerminate();                                                                      \
-            exit(-1);                                                                               \
-        }                                                                                           \
-    } while (0)
-
-#define SocketBind(socketPtr, socketAddressPtr)                                                     \
-    do                                                                                              \
-    {                                                                                               \
-        if (bind(*socketPtr, (struct sockaddr *)socketAddressPtr, sizeof(*socketAddressPtr)) == -1) \
-        {                                                                                           \
-            perror("Socket bind failed");                                                           \
-            SocketClose(socketPtr);                                                                 \
-            SocketTerminate();                                                                      \
-            exit(-1);                                                                               \
-        }                                                                                           \
-    } while (0)
-
-#define SocketListen(socketPtr, maxQueueLength)       \
-    do                                                \
-    {                                                 \
-        if (listen(*socketPtr, maxQueueLength) == -1) \
-        {                                             \
-            perror("Socket listen failed");           \
-            SocketClose(socketPtr);                   \
-            SocketTerminate();                        \
-            exit(-1);                                 \
-        }                                             \
-    } while (0)
-
-#define SocketAccept(socketPtr, clientSocketPtr)                       \
-    do                                                                 \
-    {                                                                  \
-        if ((*clientSocketPtr = accept(*socketPtr, NULL, NULL)) == -1) \
-        {                                                              \
-            perror("Socket accept failed");                            \
-            SocketClose(socketPtr);                                    \
-            SocketTerminate();                                         \
-            exit(-1);                                                  \
-        }                                                              \
-    } while (0)
-
-#define SocketConnect(socketPtr, socketAddressPtr)                                                     \
-    do                                                                                                 \
-    {                                                                                                  \
-        if (connect(*socketPtr, (struct sockaddr *)socketAddressPtr, sizeof(*socketAddressPtr)) == -1) \
-        {                                                                                              \
-            perror("Socket connect failed");                                                           \
-            SocketClose(socketPtr);                                                                    \
-            SocketTerminate();                                                                         \
-            exit(-1);                                                                                  \
-        }                                                                                              \
-    } while (0)
-
-#define SocketSend(clientSocket, msgPtr, msgSize)          \
-    do                                                     \
-    {                                                      \
-        if (send(*clientSocket, msgPtr, msgSize, 0) == -1) \
-        {                                                  \
-            perror("Socket message send failed");          \
-            SocketTerminate();                             \
-            exit(-1);                                      \
-        }                                                  \
-    } while (0)
-
-#define SocketReceive(socketPtr, bufferPtr, bufferSize)       \
-    do                                                        \
-    {                                                         \
-        if (recv(*socketPtr, bufferPtr, bufferSize, 0) == -1) \
-        {                                                     \
-            perror("Socket message receive failed");          \
-            SocketTerminate();                                \
-            exit(-1);                                         \
-        }                                                     \
-    } while (0)
-
-#define SocketSetSelect(setPtr, setSize)                     \
-    do                                                       \
-    {                                                        \
-        if (select(setSize, setPtr, NULL, NULL, NULL) == -1) \
-        {                                                    \
-            perror("Socket select failed");                  \
-            SocketTerminate();                               \
-            exit(-1);                                        \
-        }                                                    \
-    } while (0)
-
-#define ThreadCreate(threadHandlePtr, threadFunction, threadArgument)                   \
-    do                                                                                  \
-    {                                                                                   \
-        if (pthread_create(threadHandlePtr, NULL, threadFunction, threadArgument) != 0) \
-        {                                                                               \
-            perror("Thread creation failed");                                           \
-            SocketTerminate();                                                          \
-            exit(-1);                                                                   \
-        }                                                                               \
-    } while (0)
-
-#define ThreadJoin(threadHandle)          \
-    do                                    \
-    {                                     \
-        pthread_join(threadHandle, NULL); \
-    } while (0)
-
-#endif
-
-#define USER_NICK_MAX_LENGTH 32
-#define MESSAGE_MAX_LENGTH 512
-#define ROOM_IP_MAX_LENGTH 128
-#define ROOM_MAX_GUEST_COUNT 5
-
-typedef enum
+int hash(const char *key)
 {
-    UserModeInvalid = -1,
-    UserModeGuest = 0,
-    UserModeRoom = 1
-} UserMode;
+    size_t strLength = strlen(key);
 
-char COMMON_NAME[USER_NICK_MAX_LENGTH] = {0};
-UserMode APP_MODE = UserModeInvalid;
-short unsigned ROOM_PORT = 0;
+    int sum = 0;
+    int mul = 1;
 
-SocketAddress ROOM_ADDRESS = {0};
-SocketHandle COMMON_SOCKET = {0}; // either room or guest (server or client)
-
-char messageBuffer[MESSAGE_MAX_LENGTH] = {0};
-
-void *GUEST_BROADCAST_LISTENER(void *ptrArg)
-{
-    (void)ptrArg;
-    while (1)
+    for (int i = 0; i < strLength; i++)
     {
-        SocketReceive(&COMMON_SOCKET, messageBuffer, sizeof(messageBuffer));
-        printf("%s", messageBuffer);
+        mul = (i % 4 == 0) ? 1 : mul * 256;
+        sum += key[i] * mul;
     }
+
+    return sum % MAP_SIZE;
 }
 
-int main(const int argc, const char **argv)
+int mapRegister(const char *key, const RouteFunction value)
 {
-    if (strcmp("room", argv[2]) == 0)
-    {
-        APP_MODE = UserModeRoom;
-    }
-    else if (strcmp("guest", argv[2]) == 0)
-    {
-        APP_MODE = UserModeGuest;
-    }
-    else
-    {
-        printf("Invalid user mode. Read instructions in the source file.\n");
-        exit(-1);
-    }
+    int index = hash(key);
 
-    if ((APP_MODE == UserModeRoom && argc != 4) || (APP_MODE == UserModeGuest && argc != 5))
-    {
-        printf("Invalid argument count for selected mode. Read instructions.\n");
-        exit(-1);
-    }
+    ROUTE_MAP[index] = value;
 
-    unsigned char userNickLength = (unsigned char)strlen(argv[1]);
-    if (userNickLength > USER_NICK_MAX_LENGTH)
-    {
-        printf("%s is too long. Max length must be %d.\n", APP_MODE == UserModeRoom ? "Room name" : "User nick", USER_NICK_MAX_LENGTH);
-        exit(-1);
-    }
+    return index;
+}
 
-    strncpy(COMMON_NAME, argv[1], userNickLength);
+RouteFunction mapAccess(const char *key)
+{
+    int index = hash(key);
 
-    unsigned char roomPortLength = (unsigned char)strlen(argv[3]);
-    if (roomPortLength > 5 && roomPortLength < 1)
-    {
-        printf("Invalid room port.\n");
-        exit(-1);
-    }
+    return ROUTE_MAP[index];
+}
 
-    ROOM_PORT = (unsigned short)atoi(argv[3]);
+#pragma endregion HashTable
 
-    printf("\n");
+char *test(char *param)
+{
+    printf("%s\n", param);
+    return "bar";
+}
 
-    SocketInitialize();
+int main(int argc, char **argv)
+{
+    printf("index for 'testasd' : %d\n", mapRegister("testasd", test));
+    printf("fun return : %s\n", mapAccess("testasd")("foo"));
 
-    SocketCreate(&COMMON_SOCKET);
-
-    ROOM_ADDRESS.sin_family = AF_INET;
-    ROOM_ADDRESS.sin_port = htons(ROOM_PORT);
-
-    if (APP_MODE == UserModeRoom) // user is room
-    {
-        char hostName[256];
-        gethostname(hostName, sizeof(hostName));
-        printf("\nRoom Name: %s\n", COMMON_NAME);
-        printf("Server is running on host: %s\n", hostName);
-        printf("Potential room IPs to connect:\n");
-
-        struct hostent *pHostEntry = gethostbyname(hostName);
-        if (pHostEntry != NULL)
-        {
-            for (int i = 0; pHostEntry->h_addr_list[i] != NULL; i++)
-            {
-                struct in_addr addr;
-                memcpy(&addr, pHostEntry->h_addr_list[i], sizeof(struct in_addr));
-                printf("  - %s\n", inet_ntoa(addr));
-            }
-        }
-
-        printf("\n");
-
-        ROOM_ADDRESS.sin_addr.s_addr = INADDR_ANY;
-
-        SocketOption(&COMMON_SOCKET, SOL_SOCKET, SO_REUSEADDR);
-
-        SocketBind(&COMMON_SOCKET, &ROOM_ADDRESS);
-
-        SocketListen(&COMMON_SOCKET, ROOM_MAX_GUEST_COUNT);
-
-        SocketSet roomGuestSet = {0};
-        SocketSet roomGuestEventSet = {0};
-
-        FD_ZERO(&roomGuestSet);
-        FD_SET(COMMON_SOCKET, &roomGuestSet);
-
-        while (1)
-        {
-            roomGuestEventSet = roomGuestSet;
-
-            SocketSetSelect(&roomGuestEventSet, ROOM_MAX_GUEST_COUNT);
-
-            for (SocketHandle index = 0; index < ROOM_MAX_GUEST_COUNT; index++)
-            {
-                SocketHandle triggeredSocket = WINDOWS ? roomGuestEventSet.fd_array[index] : (SocketHandle)index;
-
-                if (FD_ISSET(triggeredSocket, &roomGuestEventSet))
-                {
-                    if (triggeredSocket == COMMON_SOCKET) // event from server, new connection
-                    {
-                        SocketHandle newGuestSocket = {0};
-                        SocketAccept(&COMMON_SOCKET, &newGuestSocket);
-                        FD_SET(newGuestSocket, &roomGuestSet);
-                    }
-                    else // event from already connected socket, handle connection
-                    {
-                        SocketReceive(&triggeredSocket, messageBuffer, sizeof(messageBuffer));
-
-                        if (strncmp(messageBuffer, "!q", 2) == 0)
-                        {
-                            SocketClose(&triggeredSocket);
-                            FD_CLR(triggeredSocket, &roomGuestSet);
-                            triggeredSocket = (SocketHandle)0;
-                        }
-                        else
-                        {
-                            printf("%s", messageBuffer);
-
-                            for (unsigned int j = 0; j < (unsigned int)ROOM_MAX_GUEST_COUNT; j++)
-                            {
-                                SocketHandle targetSocket = WINDOWS ? roomGuestSet.fd_array[j] : (SocketHandle)j;
-
-                                if (targetSocket != COMMON_SOCKET && targetSocket != triggeredSocket && targetSocket != (SocketHandle)0)
-                                {
-                                    SocketSend(&targetSocket, messageBuffer, sizeof(messageBuffer));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    else // user is guest
-    {
-        const char *serverIP = argv[4];
-        ROOM_ADDRESS.sin_addr.s_addr = inet_addr(serverIP);
-
-        SocketConnect(&COMMON_SOCKET, &ROOM_ADDRESS);
-
-        ThreadHandle guestBroadcastListener = {0};
-        ThreadCreate(&guestBroadcastListener, GUEST_BROADCAST_LISTENER, NULL);
-
-        while (1)
-        {
-            unsigned int nickOffset = userNickLength + sizeof("[] : ");
-
-            printf("[%s] : ", COMMON_NAME);
-            fgets((char *)messageBuffer + nickOffset, (int)(sizeof(messageBuffer) - nickOffset), stdin);
-            sprintf(messageBuffer, "[%s] : %s", argv[1], messageBuffer + nickOffset);
-
-            SocketSend(&COMMON_SOCKET, messageBuffer, sizeof(messageBuffer));
-        }
-    }
-
-    SocketTerminate();
+    return 0;
 }
