@@ -105,7 +105,7 @@ int main(int argc, char **argv)
 			goto errListen;
 		}
 
-		printf("Room is ready, listening for port : %d...\n", port);
+		printf("Room is ready, listening to port : %d...\n", port);
 
 		for(;;)
 		{
@@ -116,6 +116,8 @@ int main(int argc, char **argv)
 				close(roomSocket);
 				goto errAccept;
 			}
+
+			printf("Connected");
 
 			char readBuffer[HTTP_BUFFER] = {0};
 			int readCount = read(clientSocket, readBuffer, HTTP_BUFFER);
@@ -135,10 +137,6 @@ int main(int argc, char **argv)
 				close(roomSocket);
 				goto errWrite;
 			}
-
-			//parse http
-			//read
-			//write if get
 
 			close(clientSocket);
 		}
@@ -195,7 +193,7 @@ int main(int argc, char **argv)
 
 		for(;;)
 		{
-			printf("[%s] : ", argv[2]);
+			printf("\n[%s] : ", argv[2]);
 
 			if(fgets(inputBuffer, HTTP_BUFFER, stdin) == NULL)
 			{
