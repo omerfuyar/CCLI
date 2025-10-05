@@ -55,7 +55,6 @@ HOW TO USE
 
 #define ROOM_SIZE 16
 #define HTTP_BUFFER 1024
-#define QUIT_STRING "!q"
 #define QUERY_STRING "\n"
 
 int main(int argc, char **argv)
@@ -68,6 +67,7 @@ int main(int argc, char **argv)
 	if (!strcmp(argv[1], "room"))
 	{
 		int port = atoi(argv[3]);
+
 		if(port < 0 || port > 65535){
 			goto errBadPort;
 		}
@@ -77,6 +77,8 @@ int main(int argc, char **argv)
 			.sin_port = htons(port),
 			.sin_addr.s_addr = htonl(INADDR_ANY)
 		};
+
+		printf("Creating room '%s'...\n", argv[2]);
 
 		int roomSocket = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -103,6 +105,8 @@ int main(int argc, char **argv)
 			goto errListen;
 		}
 
+		printf("Room is ready, listening for port : %d...\n", port);
+
 		for(;;)
 		{
 			int clientSocket = accept(roomSocket, NULL, NULL);
@@ -122,7 +126,7 @@ int main(int argc, char **argv)
 				goto errRead;
 			}
 
-			printf("%.*s", readCount, readBuffer);
+			printf("%s", readBuffer);
 
 		 	int writeCount = write(clientSocket, "test", 4);
 			if(writeCount == -1)
@@ -143,53 +147,92 @@ int main(int argc, char **argv)
 	{
 		struct addrinfo addressHints = {
 			.ai_family = AF_INET,
-			.ai_socktype = SOCK_STREAM
+			.ai_socktype = SOCK_STREAM,
+			.ai_flags = 0,
+			.ai_protocol = 0
 		};
 
-		struct addrinfo *addressResult = NULL;
+		struct addrinfo *addressResults = NULL;
 
-		if(getaddrinfo(argv[3], "http", &addressHints, &addressResult) == -1)
+		printf("Getting addres information...\n");
+
+		if(getaddrinfo(argv[3], "http", &addressHints, &addressResults) == -1)
 		{
 			goto errInfo;
 		}
 
-		int clientSocket = socket(addressResult->ai_family, addressResult->ai_socktype, addressResult->ai_protocol);
+		struct addrinfo *addressFound = addressResults;
 
-		if(clientSocket == -1)
+		for(; addressFound != NULL; addressFound = addressFound->ai_next)
 		{
-			freeaddrinfo(addressResult);
-			goto errSocket;
+			int tempSocket = socket(addressFound->ai_family, addressFound->ai_socktype, addressFound->ai_protocol);
+
+			printf("%d, %d, %d\n", addressFound->ai_family, addressFound->ai_socktype, addressFound->ai_protocol);
+
+			if(tempSocket == -1)
+			{
+				continue;
+			}
+
+			if(connect(tempSocket, addressFound->ai_addr, addressFound->ai_addrlen) != -1)
+			{
+				close(tempSocket);
+				break;
+			}
+
+			close(tempSocket);
 		}
+
+		if(addressFound == NULL)
+		{
+			freeaddrinfo(addressResults);
+			goto errBadAddress;
+		}
+
+		printf("Address found. Creating client...\n");
 
 		char inputBuffer[HTTP_BUFFER] = {0};
 
 		for(;;)
 		{
+			printf("[%s] : ", argv[2]);
+
 			if(fgets(inputBuffer, HTTP_BUFFER, stdin) == NULL)
 			{
-				close(clientSocket);
-				freeaddrinfo(addressResult);
+				freeaddrinfo(addressResults);
 				goto errInput;
 			}
 
-			if(!strcmp(inputBuffer, QUIT_STRING))
+			int clientSocket = socket(addressFound->ai_family, addressFound->ai_socktype, addressFound->ai_protocol);
+
+			if(clientSocket == -1)
 			{
-				break;
+				freeaddrinfo(addressResults);
+				goto errSocket;
 			}
 
-			if(connect(clientSocket, addressResult->ai_addr, addressResult->ai_addrlen) == -1)
+			if(connect(clientSocket, addressResults->ai_addr, addressResults->ai_addrlen) == -1)
 			{
 				close(clientSocket);
-				freeaddrinfo(addressResult);
+				freeaddrinfo(addressResults);
 				goto errConnect;
 			}
 
-			int writeStatus = write(clientSocket, inputBuffer, strlen(inputBuffer) + 1);
+			int writeStatus = -1;
+
+			if(strcmp(inputBuffer, QUERY_STRING))
+			{
+				writeStatus = write(clientSocket, inputBuffer, strlen(inputBuffer));
+			}
+			else
+			{
+				writeStatus = write(clientSocket, "get", 3);
+			}
 
 			if(writeStatus == -1)
 			{
 				close(clientSocket);
-				freeaddrinfo(addressResult);
+				freeaddrinfo(addressResults);
 				goto errWrite;
 			}
 
@@ -200,21 +243,21 @@ int main(int argc, char **argv)
 			if(readStatus == -1)
 			{
 				close(clientSocket);
-				freeaddrinfo(addressResult);
+				freeaddrinfo(addressResults);
 				goto errRead;
 			}
 
 			close(clientSocket);
 		}
 
-		close(clientSocket);
-		freeaddrinfo(addressResult);
+		freeaddrinfo(addressResults);
 	}
 	else
 	{
 		goto errBadMode;
 	}
 
+	printf("Exited successfully.\n");
 	return 0;
 
 errArgCount:
