@@ -143,15 +143,16 @@ int main(int argc, char **argv)
 				goto errRead;
 			}
 
-			char *currentIndex = readBuffer;
-			char hasBody = 0;
 			char guestName[GUEST_NAME_BUFFER + 1] = {0};
+			char *currentIndex = readBuffer;
+			char nameSet = 0;
+			char method = 0;
 
-			while(strncmp(currentIndex, "\r\n", 2))
+			while(strncmp(currentIndex, "\r\n\r\n", 4))
 			{
-				if(!strncmp(currentIndex, "GET", 3))
+				if(method == 0 && !strncmp(currentIndex, "GET", 3)) //1
 				{
-					hasBody = 0;
+					method = 1;
 
 		 			int writeCount = write(clientSocket, history, HTTP_HISTORY * HTTP_BUFFER);
 
@@ -161,15 +162,15 @@ int main(int argc, char **argv)
 						goto errWrite;
 					}
 				}
-				else if(!strncmp(currentIndex, "POST", 4))
+				else if(method == 0 && !strncmp(currentIndex, "POST", 4)) //2
 				{
-					hasBody = 1;
+					method = 2;
 				}
-				else if(!strncmp(currentIndex, "Guest: ", 7))
+				else if(nameSet == 0 && !strncmp(currentIndex, "Guest: ", 7))
 				{
 					size_t nameLength = 0;
 
-					while(strncmp(currentIndex + nameLength, "\r\n", 2))
+					while(strncmp(currentIndex + 7 + nameLength, "\r\n", 2))
 					{
 						nameLength++;
 					}
@@ -180,15 +181,17 @@ int main(int argc, char **argv)
 						goto errBuffer;
 					}
 
-					memcpy(guestName, currentIndex, nameLength);
+					memcpy(guestName, currentIndex + 7, nameLength);
 
 					guestName[nameLength] = '\0';
+
+					nameSet = 1;
 				}
 
 				currentIndex++;
 			}
 
-			if(hasBody == 1)
+			if(method == 2)
 			{
 				currentIndex += 2;
 
