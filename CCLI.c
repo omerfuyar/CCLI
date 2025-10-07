@@ -31,15 +31,15 @@ HOW TO USE
 		Room:
 			<CCLI_EXECUTABLE> room <ROOM_NAME> <ROOM_PORT_TO_LISTEN>
 		Guest:
-			<CCLI_EXECUTABLE> guest <GUEST_NAME> <ROOM_HTTP_URL_TO_JOIN>
+			<CCLI_EXECUTABLE> guest <GUEST_NAME> <ROOM_URL_TO_JOIN> <ROOM_PORT_TO_JOIN>
 
 	-Example:
 		Room:
 			./CCLI room MyRoom 3000
 			[ngrok http 3000]
 		Guests:
-			./CCLI guest LocalGuest http://localhost:3000
-			[./CCLI guest RemoteGuest http://my-ngrok-url.com]
+			./CCLI guest LocalGuest localhost 3000
+			[./CCLI guest RemoteGuest my-ngrok-url.com 80]
 */
 
 #include <stdio.h>
@@ -55,17 +55,29 @@ HOW TO USE
 
 #define ROOM_SIZE 16
 #define HTTP_BUFFER 1024
+#define HTTP_HISTORY 128
+#define GUEST_NAME_BUFFER 32
 #define QUERY_STRING "\n"
 
 int main(int argc, char **argv)
 {
-	if (argc != 4)
+	if (argc != 4 && argc != 5)
 	{
 		goto errArgCount;
 	}
 
+	if (strlen(argv[2]) > GUEST_NAME_BUFFER)
+	{
+		goto errBuffer;
+	}
+
 	if (!strcmp(argv[1], "room"))
 	{
+		if(argc != 4)
+		{
+			goto errArgCount;
+		}
+
 		int port = atoi(argv[3]);
 
 		if(port < 0 || port > 65535){
@@ -105,6 +117,9 @@ int main(int argc, char **argv)
 			goto errListen;
 		}
 
+		char history[HTTP_HISTORY * HTTP_BUFFER] = {0};
+		size_t historyIndex = 0;
+
 		printf("Room is ready, listening to port : %d...\n", port);
 
 		for(;;)
@@ -117,10 +132,10 @@ int main(int argc, char **argv)
 				goto errAccept;
 			}
 
-			printf("Connected");
-
 			char readBuffer[HTTP_BUFFER] = {0};
+
 			int readCount = read(clientSocket, readBuffer, HTTP_BUFFER);
+
 			if(readCount == -1)
 			{
 				close(clientSocket);
@@ -128,21 +143,72 @@ int main(int argc, char **argv)
 				goto errRead;
 			}
 
-			printf("%s", readBuffer);
+			char *currentIndex = readBuffer;
+			char hasBody = 0;
+			char guestName[GUEST_NAME_BUFFER + 1] = {0};
 
-		 	int writeCount = write(clientSocket, "test", 4);
-			if(writeCount == -1)
+			while(strncmp(currentIndex, "\r\n", 2))
 			{
-				close(clientSocket);
-				close(roomSocket);
-				goto errWrite;
+				if(!strncmp(currentIndex, "GET", 3))
+				{
+					hasBody = 0;
+
+		 			int writeCount = write(clientSocket, history, HTTP_HISTORY * HTTP_BUFFER);
+
+					if(writeCount == -1)
+					{
+						close(roomSocket);
+						goto errWrite;
+					}
+				}
+				else if(!strncmp(currentIndex, "POST", 4))
+				{
+					hasBody = 1;
+				}
+				else if(!strncmp(currentIndex, "Guest: ", 7))
+				{
+					size_t nameLength = 0;
+
+					while(strncmp(currentIndex + nameLength, "\r\n", 2))
+					{
+						nameLength++;
+					}
+
+					if(nameLength > GUEST_NAME_BUFFER)
+					{
+						close(roomSocket);
+						goto errBuffer;
+					}
+
+					memcpy(guestName, currentIndex, nameLength);
+
+					guestName[nameLength] = '\0';
+				}
+
+				currentIndex++;
 			}
 
-			close(clientSocket);
+			if(hasBody == 1)
+			{
+				currentIndex += 2;
+
+				if(historyIndex >= HTTP_HISTORY)
+				{
+					historyIndex = 0;
+					memset(history, 0, HTTP_HISTORY * HTTP_BUFFER);
+				}
+
+				snprintf(history + HTTP_BUFFER * historyIndex, (HTTP_HISTORY - historyIndex) * HTTP_BUFFER, "\n[%s] : %s", guestName, currentIndex);
+			}
 		}
 	}
 	else if (!strcmp(argv[1], "guest"))
 	{
+		if(argc != 5)
+		{
+			goto errArgCount;
+		}
+
 		struct addrinfo addressHints = {
 			.ai_family = AF_INET,
 			.ai_socktype = SOCK_STREAM,
@@ -154,7 +220,7 @@ int main(int argc, char **argv)
 
 		printf("Getting addres information...\n");
 
-		if(getaddrinfo(argv[3], "http", &addressHints, &addressResults) == -1)
+		if(getaddrinfo(argv[3], argv[4], &addressHints, &addressResults) == -1)
 		{
 			goto errInfo;
 		}
@@ -163,9 +229,7 @@ int main(int argc, char **argv)
 
 		for(; addressFound != NULL; addressFound = addressFound->ai_next)
 		{
-			int tempSocket = socket(addressFound->ai_family, addressFound->ai_socktype, addressFound->ai_protocol);
-
-			printf("%d, %d, %d\n", addressFound->ai_family, addressFound->ai_socktype, addressFound->ai_protocol);
+			int tempSocket =  socket(addressFound->ai_family, addressFound->ai_socktype, addressFound->ai_protocol);
 
 			if(tempSocket == -1)
 			{
@@ -187,9 +251,9 @@ int main(int argc, char **argv)
 			goto errBadAddress;
 		}
 
-		printf("Address found. Creating client...\n");
-
 		char inputBuffer[HTTP_BUFFER] = {0};
+
+		printf("Address found. Creating client...\n");
 
 		for(;;)
 		{
@@ -218,14 +282,18 @@ int main(int argc, char **argv)
 
 			int writeStatus = -1;
 
+			char request[HTTP_BUFFER] = {0};
+
 			if(strcmp(inputBuffer, QUERY_STRING))
 			{
-				writeStatus = write(clientSocket, inputBuffer, strlen(inputBuffer));
+				snprintf(request, HTTP_BUFFER, "POST / HTTP/1.0\r\nGuest: %s\r\n\r\n%s", argv[2], inputBuffer);
 			}
 			else
 			{
-				writeStatus = write(clientSocket, "get", 3);
+				snprintf(request, HTTP_BUFFER, "GET / HTTP/1.0\r\nGuest: %s\r\n\r\n", argv[2]);
 			}
+
+			writeStatus = write(clientSocket, request, strlen(request));
 
 			if(writeStatus == -1)
 			{
@@ -245,82 +313,88 @@ int main(int argc, char **argv)
 				goto errRead;
 			}
 
+			printf("\x1b[2J%s", readBuffer);
+
 			close(clientSocket);
 		}
-
-		freeaddrinfo(addressResults);
 	}
 	else
 	{
 		goto errBadMode;
 	}
 
-	printf("Exited successfully.\n");
-	return 0;
-
 errArgCount:
 	printf("Invalid use of app. Please read the guide in source code.\n");
 	return 1;
 
+errBuffer:
+	printf("Buffer error. Name should be shorter than %d characters\n", GUEST_NAME_BUFFER);
+	return 2;
+
 errBadMode:
 	printf("Invalid user mode. Please read the guide in source code.\n");
-	return 2;
+	return 3;
 
 errBadPort:
 	printf("Invalid port. Please enter a usable port.\n");
-	return 3;
+	return 4;
 
 errBadAddress:
 	printf("Invalid address trying to access. Please enter a usable URL.\n");
-	return 4;
+	return 5;
 
 errSocket:
 	printf("Error creating socket.\n");
 	perror("socket");
-	return 5;
+	return 6;
 
 errOption:
 	printf("Error setting socket option.\n");
 	perror("option");
-	return 6;
+	return 7;
 
 errBind:
 	printf("Error binding socket.\n");
 	perror("bind");
-	return 7;
+	return 8;
 
 errListen:
 	printf("Error listening socket.\n");
 	perror("listen");
-	return 8;
+	return 9;
 
 errAccept:
 	printf("Error accepting connection.\n");
 	perror("accept");
-	return 9;
+	return 10;
 
 errRead:
 	printf("Error reading file.\n");
-	perror("accept");
-	return 10;
+	perror("read");
+	return 11;
 
 errWrite:
 	printf("Error writing file.\n");
 	perror("write");
-	return 11;
+	return 12;
 
 errInfo:
 	printf("Error getting address info.\n");
 	perror("info");
-	return 12;
+	return 13;
 
 errConnect:
 	printf("Error connecting socket.\n");
 	perror("connect");
-	return 13;
+	return 14;
 
 errInput:
 	printf("Error getting input.\n");
 	perror("input");
-	return 14;
+	return 15;
+
+errFormat:
+	printf("Error reading http request. Wrong format.\n");
+	perror("format");
+	return 16;
 }
